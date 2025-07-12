@@ -46,7 +46,7 @@ export const DEFAULT_EIP_CONFIG: EIPConfig = {
 
 export interface EIPMessage {
   version: string;
-  type: 'connect' | 'connect_response' | 'tx_request' | 'tx_response' | 'ack' | 'error';
+  type: 'connect' | 'connect_response' | 'tx_request' | 'tx_response' | 'ack' | 'error' | 'chunk';
   payload: any;
   id: string;
 }
@@ -106,7 +106,7 @@ export function validateEIPMessage(message: any): message is EIPMessage {
     typeof message === 'object' &&
     typeof message.version === 'string' &&
     typeof message.type === 'string' &&
-    ['connect', 'connect_response', 'tx_request', 'tx_response', 'ack', 'error'].includes(message.type) &&
+    ['connect', 'connect_response', 'tx_request', 'tx_response', 'ack', 'error', 'chunk'].includes(message.type) &&
     typeof message.payload === 'object' &&
     typeof message.id === 'string'
   );

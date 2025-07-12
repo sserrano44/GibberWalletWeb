@@ -65,7 +65,7 @@ export const EIP_AUDIO_CONFIG: AudioConfig = {
   ggwave: {
     soundMarkerThreshold: 4,
     volumeLevel: 15, // Will be adjusted to 60% in the protocol implementation
-    protocol: 0, // GGWAVE_PROTOCOL_AUDIBLE_NORMAL for EIP compliance
+    protocol: 1, // GGWAVE_PROTOCOL_AUDIBLE_FAST for compatibility with main client
   },
   chunking: {
     maxMessageSize: 4096, // Smaller chunks for EIP compliance

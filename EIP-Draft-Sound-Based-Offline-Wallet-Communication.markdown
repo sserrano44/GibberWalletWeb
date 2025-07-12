@@ -33,6 +33,7 @@ Messages are JSON-encoded objects with the following fields:
   - `"tx_response"`: Signed transaction response from the offline wallet.
   - `"ack"`: General acknowledgment of message receipt.
   - `"error"`: Indicates an error condition.
+  - `"chunk"`: Part of a chunked message for handling large payloads.
 - **`payload`**: The data specific to the message type (see below for details).
 - **`id`**: A unique string identifier for the message, used to correlate requests and responses.
 
@@ -120,6 +121,22 @@ Messages are JSON-encoded objects with the following fields:
   }
   ```
 
+- **For `chunk`:**
+  ```json
+  {
+    "version": "1.0",
+    "type": "chunk",
+    "payload": {
+      "originalMessageId": "original-msg-id",
+      "originalType": "connect_response",
+      "chunkIndex": 0,
+      "totalChunks": 3,
+      "chunkData": "{\"version\":\"1.0\",\"type\":\"connect_response\",\"payload\":{\"address\""
+    },
+    "id": "chunk-id-1"
+  }
+  ```
+
 ### Versioning
 
 - **Purpose:** The `version` field ensures that devices can identify and process messages according to the correct protocol version.
@@ -138,13 +155,37 @@ Messages are JSON-encoded objects with the following fields:
     ```
   - Implementations must support at least version `"1.0"` as defined in this EIP.
 
+### Message Chunking
+
+Due to the 140-byte limitation of ggwave protocols, messages that exceed this limit must be split into smaller chunks for transmission.
+
+- **Chunking Threshold:** Messages longer than 120 bytes should be chunked (providing a safety margin).
+- **Chunk Size:** Each chunk should contain no more than 80 bytes of data to ensure reliable transmission.
+- **Chunk Format:** Chunks are sent as `"chunk"` message types with the following payload structure:
+  - `originalMessageId`: The ID of the original message being chunked
+  - `originalType`: The type of the original message (e.g., `"connect_response"`)
+  - `chunkIndex`: Zero-based index of this chunk (0, 1, 2, ...)
+  - `totalChunks`: Total number of chunks for this message
+  - `chunkData`: The actual data fragment for this chunk
+
+- **Transmission:** Chunks should be sent sequentially with a 1.5-second delay between each chunk to ensure reliable reception.
+- **Reassembly:** The receiver collects all chunks and reconstructs the original message by:
+  1. Collecting chunks with the same `originalMessageId`
+  2. Sorting chunks by `chunkIndex`
+  3. Verifying all chunks are received (`chunks.length === totalChunks`)
+  4. Concatenating `chunkData` from all chunks in order
+  5. Parsing the reconstructed JSON as the original message
+
+- **Error Handling:** If chunk reassembly fails or times out, the receiver should discard partial chunks and may request retransmission.
+
 ### Sound Encoding
 
 - **Library:** Data is encoded into sound waves using the ggwave library or a compatible alternative.
 - **Parameters:**
-  - **Protocol:** Use ggwave's "Normal" protocol for audible frequencies to ensure broad hardware compatibility.
+  - **Protocol:** Use ggwave's "Fast" protocol (ID: 1) for audible frequencies to ensure optimal speed while maintaining reliability. Alternative protocols such as "Normal" (ID: 0) may be used but all implementations should use the same protocol for compatibility.
   - **Sample Rate:** 44100 Hz.
   - **Volume:** Recommended at 50-70% of maximum volume, adjustable based on the environment.
+  - **Message Limit:** All ggwave protocols have a maximum message size of 140 bytes. Messages exceeding this limit must use the chunking mechanism described above.
 - **Process:**
   1. Serialize the JSON message to a string.
   2. Encode the string into a waveform using ggwave.
@@ -158,18 +199,27 @@ The protocol operates as follows:
 1. **Connection Establishment:**
    - The online device plays a `connect` message with the current protocol version to signal readiness and request the wallet address.
    - The offline wallet, upon detecting the `connect`, checks the `version`. If supported, it responds with a `connect_response` message containing the wallet's Ethereum address and using the same version; otherwise, it sends an `error`.
+   - If the `connect_response` exceeds 120 bytes, it will be automatically chunked and sent as multiple `chunk` messages.
 
 2. **Transaction Request:**
    - After receiving the `connect_response`, the online device now knows the wallet address and can construct transactions. It sends a `tx_request` message containing the unsigned transaction data.
-   - The offline wallet captures the sound, decodes the `tx_request`, verifies the `version`, displays the transaction details to the user for confirmation, and optionally sends an `ack` to confirm receipt.
+   - Large transaction requests may be chunked automatically if they exceed the 120-byte threshold.
+   - The offline wallet captures the sound, decodes the `tx_request` (reassembling chunks if necessary), verifies the `version`, displays the transaction details to the user for confirmation, and optionally sends an `ack` to confirm receipt.
 
 3. **Transaction Response:**
    - Upon user approval, the offline wallet signs the transaction, constructs a `tx_response` message with the signed transaction (including both the raw signed transaction and its hash), encodes it into sound, and plays it.
-   - The online device captures the sound, decodes the `tx_response`, verifies the `version`, and broadcasts the signed transaction to the Ethereum network.
+   - Large transaction responses may be chunked automatically if they exceed the 120-byte threshold.
+   - The online device captures the sound, decodes the `tx_response` (reassembling chunks if necessary), verifies the `version`, and broadcasts the signed transaction to the Ethereum network.
 
-4. **Error Handling:**
+4. **Chunked Message Handling:**
+   - When a chunked message is detected, the receiver collects all chunks with the same `originalMessageId`.
+   - Chunks are reassembled in order based on `chunkIndex` once all chunks are received.
+   - The reassembled message is then processed as if it were received as a single message.
+
+5. **Error Handling:**
    - If either device fails to receive an expected message within a 10-second timeout, it may retry (e.g., resend `connect` or return to listening mode).
-   - Errors (e.g., corrupted data, unsupported version) are communicated via an `error` message with the appropriate version.
+   - If chunk reassembly fails or times out, the receiver should discard partial chunks.
+   - Errors (e.g., corrupted data, unsupported version, chunking failures) are communicated via an `error` message with the appropriate version.
 
 ### Security Considerations
 
@@ -197,13 +247,19 @@ This EIP introduces a new, optional communication method and does not affect exi
    - Online device sends `connect` (version `"1.0"`), receives `connect_response` with wallet address, sends `tx_request`, and receives `tx_response` with a valid signed transaction.
 2. **Address Discovery:**
    - Online device sends `connect`, receives `connect_response` containing the wallet address `0x742d35cc6bf8c3f2e4e4fd7a3f1b4c6e7d8e9f0a`, and can now construct transactions for this address.
-3. **Noisy Environment:**
+3. **Chunked Connect Response:**
+   - Online device sends `connect`, receives a large `connect_response` split into 3 chunks, successfully reassembles the chunks, and extracts the wallet address.
+4. **Chunked Transaction Request:**
+   - Online device sends a large `tx_request` (e.g., with extensive contract interaction data) that gets chunked into multiple parts, offline wallet receives and reassembles all chunks, and processes the complete transaction.
+5. **Failed Chunk Reassembly:**
+   - Offline wallet receives chunks 1 and 3 but misses chunk 2, times out waiting for the missing chunk, discards partial data, and may request retransmission.
+6. **Noisy Environment:**
    - Offline wallet detects a corrupted `tx_request` and either ignores it or sends an `error` message (version `"1.0"`).
-4. **Timeout:**
+7. **Timeout:**
    - Online device sends `connect` but receives no `connect_response` within 10 seconds, then retries successfully.
-5. **Version Mismatch:**
+8. **Version Mismatch:**
    - Online device sends `connect` with version `"2.0"`; offline wallet responds with an `error` in version `"1.0"`, indicating unsupported version.
-6. **Security:**
+9. **Security:**
    - A malicious `tx_request` is sent; offline wallet displays it and awaits user rejection.
 
 ## Implementation
@@ -212,9 +268,14 @@ Wallet developers can implement this protocol by:
 
 1. Integrating the ggwave library (or equivalent) into both online and offline wallet software.
 2. Supporting the specified JSON message format, including the `version` field, and the communication flow.
-3. Ensuring the offline wallet includes a user interface for transaction confirmation.
-4. Providing user feedback (e.g., "Place devices close together" or "Listening for sound").
-5. Validating the `version` field and handling unsupported versions gracefully.
+3. Implementing message chunking for messages exceeding 120 bytes:
+   - Automatic chunking of outgoing messages
+   - Chunk collection and reassembly for incoming messages
+   - Proper handling of chunk timeouts and failures
+4. Ensuring the offline wallet includes a user interface for transaction confirmation.
+5. Providing user feedback (e.g., "Place devices close together" or "Listening for sound").
+6. Validating the `version` field and handling unsupported versions gracefully.
+7. Using consistent ggwave protocol settings (recommended: "Fast" protocol ID 1) across all implementations for compatibility.
 
 ### Notes
 

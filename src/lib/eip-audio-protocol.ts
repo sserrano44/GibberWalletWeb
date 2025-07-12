@@ -35,6 +35,7 @@ export class EIPAudioProtocol extends EventEmitter {
   private isListening = false;
   private isTransmitting = false;
   private analyser: AnalyserNode | null = null;
+  private chunkStorage: Map<string, EIPMessage[]> = new Map();
 
   constructor() {
     super();
@@ -241,16 +242,29 @@ export class EIPAudioProtocol extends EventEmitter {
       return false;
     }
 
+    const messageText = JSON.stringify(message);
+    
+    // Check if message needs chunking (140 bytes is ggwave limit for Normal protocol)
+    if (messageText.length > 120) { // Use 120 to be safe
+      return await this.sendChunkedEIPMessage(message);
+    }
+
+    return await this.sendSingleEIPMessage(messageText);
+  }
+
+  /**
+   * Send a single EIP message without chunking
+   */
+  private async sendSingleEIPMessage(messageText: string): Promise<boolean> {
     try {
       this.isTransmitting = true;
       this.emit('transmitting', true);
 
-      const messageText = JSON.stringify(message);
       console.log('Sending EIP audio message:', messageText);
 
       // Encode message to audio using EIP-compliant protocol
-      const waveform = this.ggwave.encode(
-        this.instance,
+      const waveform = this.ggwave!.encode(
+        this.instance!,
         messageText,
         EIP_AUDIO_CONFIG.ggwave.protocol, // Use EIP-compliant protocol
         EIP_AUDIO_CONFIG.ggwave.volumeLevel // Use EIP-compliant volume
@@ -260,15 +274,15 @@ export class EIPAudioProtocol extends EventEmitter {
       const audioBuffer = convertTypedArray(waveform, Float32Array);
       
       // Create audio buffer with EIP sample rate
-      const buffer = this.context.createBuffer(1, audioBuffer.length, this.context.sampleRate);
+      const buffer = this.context!.createBuffer(1, audioBuffer.length, this.context!.sampleRate);
       buffer.getChannelData(0).set(audioBuffer);
       
       // Create and play buffer source
-      const source = this.context.createBufferSource();
+      const source = this.context!.createBufferSource();
       source.buffer = buffer;
 
       // Connect directly to destination for transmission (no feedback loop)
-      source.connect(this.context.destination);
+      source.connect(this.context!.destination);
 
       // Play the audio
       source.start(0);
@@ -285,6 +299,59 @@ export class EIPAudioProtocol extends EventEmitter {
       console.error('Failed to send EIP audio message:', error);
       this.isTransmitting = false;
       this.emit('transmitting', false);
+      this.emit('error', error instanceof Error ? error : new Error(String(error)));
+      return false;
+    }
+  }
+
+  /**
+   * Send a message in chunks for EIP compliance
+   */
+  private async sendChunkedEIPMessage(message: EIPMessage): Promise<boolean> {
+    try {
+      console.log('EIP message too large, chunking into smaller pieces...');
+      const messageText = JSON.stringify(message);
+      const chunkSize = 80; // Conservative chunk size for ggwave Normal protocol
+      const chunks: string[] = [];
+      
+      // Split message into chunks
+      for (let i = 0; i < messageText.length; i += chunkSize) {
+        chunks.push(messageText.substring(i, i + chunkSize));
+      }
+      
+      console.log(`Sending ${chunks.length} chunks for EIP message ${message.id}`);
+      
+      // Send each chunk as a separate message
+      for (let i = 0; i < chunks.length; i++) {
+        const chunkMessage = {
+          version: message.version,
+          type: 'chunk' as const,
+          payload: {
+            originalMessageId: message.id,
+            originalType: message.type,
+            chunkIndex: i,
+            totalChunks: chunks.length,
+            chunkData: chunks[i]
+          },
+          id: crypto.randomUUID()
+        };
+        
+        const chunkText = JSON.stringify(chunkMessage);
+        console.log(`Sending EIP chunk ${i + 1}/${chunks.length}: ${chunkText.length} bytes`);
+        
+        if (!await this.sendSingleEIPMessage(chunkText)) {
+          throw new Error(`Failed to send EIP chunk ${i + 1}`);
+        }
+        
+        // Add delay between chunks to avoid overwhelming the receiver
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+      
+      console.log('All EIP chunks sent successfully');
+      return true;
+      
+    } catch (error) {
+      console.error('Failed to send chunked EIP message:', error);
       this.emit('error', error instanceof Error ? error : new Error(String(error)));
       return false;
     }
@@ -311,8 +378,54 @@ export class EIPAudioProtocol extends EventEmitter {
       return;
     }
 
+    // Handle chunk messages
+    if (message.type === 'chunk') {
+      this.handleChunk(message);
+      return;
+    }
+
     // Emit the validated EIP message
     this.emit('eip-message', message);
+  }
+
+  /**
+   * Handle a chunk message and reassemble if complete
+   */
+  private handleChunk(chunk: EIPMessage): void {
+    const { originalMessageId, chunkIndex, totalChunks, chunkData, originalType } = chunk.payload;
+    
+    console.log(`Received EIP chunk ${chunkIndex + 1}/${totalChunks} for message ${originalMessageId}`);
+    
+    // Get or create chunk storage for this message
+    if (!this.chunkStorage.has(originalMessageId)) {
+      this.chunkStorage.set(originalMessageId, []);
+    }
+    
+    const chunks = this.chunkStorage.get(originalMessageId)!;
+    chunks.push(chunk);
+    
+    // Check if we have all chunks
+    if (chunks.length === totalChunks) {
+      console.log(`All EIP chunks received for message ${originalMessageId}, reassembling...`);
+      
+      // Sort chunks by index
+      chunks.sort((a, b) => a.payload.chunkIndex - b.payload.chunkIndex);
+      
+      // Reassemble the message data
+      const reassembledData = chunks
+        .map(c => c.payload.chunkData)
+        .join('');
+      
+      try {
+        const originalMessage = JSON.parse(reassembledData) as EIPMessage;
+        console.log('Successfully reassembled EIP chunked message:', originalMessage.type);
+        this.chunkStorage.delete(originalMessageId);
+        this.emit('eip-message', originalMessage);
+      } catch (error) {
+        console.error('Failed to reassemble EIP chunked message:', error);
+        this.chunkStorage.delete(originalMessageId);
+      }
+    }
   }
 
   /**
@@ -382,6 +495,7 @@ export class EIPAudioProtocol extends EventEmitter {
 
     this.ggwave = null;
     this.instance = null;
+    this.chunkStorage.clear();
     this.removeAllListeners();
   }
 }
