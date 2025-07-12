@@ -1,3 +1,5 @@
+import shortUuid from 'short-uuid';
+
 export interface EIPConfig {
   version: string;
   timeouts: {
@@ -88,6 +90,8 @@ export interface ErrorPayload {
   received_id?: string;
 }
 
+const translator = shortUuid(); // Creates a translator instance
+
 export function createEIPMessage(
   type: EIPMessage['type'],
   payload: any,
@@ -97,7 +101,7 @@ export function createEIPMessage(
     version: EIP_PROTOCOL_VERSION,
     type,
     payload,
-    id: id || crypto.randomUUID(),
+    id: id || translator.new(), // Use short-uuid instead of crypto.randomUUID()
   };
 }
 

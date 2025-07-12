@@ -35,7 +35,7 @@ Messages are JSON-encoded objects with the following fields:
   - `"error"`: Indicates an error condition.
   - `"chunk"`: Part of a chunked message for handling large payloads.
 - **`payload`**: The data specific to the message type (see below for details).
-- **`id`**: A unique string identifier for the message, used to correlate requests and responses.
+- **`id`**: A unique string identifier for the message, used to correlate requests and responses. To minimize message size, implementations should use shortened UUID formats (e.g., short-uuid library) rather than standard 36-character UUIDs.
 
 #### Payload Examples
 
@@ -168,7 +168,7 @@ Due to the 140-byte limitation of ggwave protocols, messages that exceed this li
   - `totalChunks`: Total number of chunks for this message
   - `chunkData`: The actual data fragment for this chunk
 
-- **Transmission:** Chunks should be sent sequentially with a 1.5-second delay between each chunk to ensure reliable reception.
+- **Transmission:** Chunks must be sent sequentially, waiting for each chunk transmission to fully complete before starting the next one. A 1-second buffer delay should be added between completed chunks to ensure reliable reception and avoid audio overlap.
 - **Reassembly:** The receiver collects all chunks and reconstructs the original message by:
   1. Collecting chunks with the same `originalMessageId`
   2. Sorting chunks by `chunkIndex`
@@ -176,6 +176,7 @@ Due to the 140-byte limitation of ggwave protocols, messages that exceed this li
   4. Concatenating `chunkData` from all chunks in order
   5. Parsing the reconstructed JSON as the original message
 
+- **Audio Isolation:** During chunk transmission, the sending device should completely stop audio listening to prevent interference from hearing its own transmission. Audio listening should be restarted after all chunks are sent with a 2-second buffer period.
 - **Error Handling:** If chunk reassembly fails or times out, the receiver should discard partial chunks and may request retransmission.
 
 ### Sound Encoding
@@ -270,12 +271,15 @@ Wallet developers can implement this protocol by:
 2. Supporting the specified JSON message format, including the `version` field, and the communication flow.
 3. Implementing message chunking for messages exceeding 120 bytes:
    - Automatic chunking of outgoing messages
+   - Sequential chunk transmission with completion waiting
    - Chunk collection and reassembly for incoming messages
+   - Audio isolation during chunk transmission to prevent interference
    - Proper handling of chunk timeouts and failures
 4. Ensuring the offline wallet includes a user interface for transaction confirmation.
 5. Providing user feedback (e.g., "Place devices close together" or "Listening for sound").
 6. Validating the `version` field and handling unsupported versions gracefully.
 7. Using consistent ggwave protocol settings (recommended: "Fast" protocol ID 1) across all implementations for compatibility.
+8. Using shortened UUID formats for message IDs to reduce message size and minimize chunking requirements.
 
 ### Notes
 

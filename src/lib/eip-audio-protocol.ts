@@ -8,6 +8,9 @@ import {
   createEIPMessage,
   EIP_PROTOCOL_VERSION 
 } from '@/config/eip-config';
+import shortUuid from 'short-uuid';
+
+const translator = shortUuid();
 
 // Helper function to convert array types
 function convertTypedArray(src: any, type: any) {
@@ -284,16 +287,35 @@ export class EIPAudioProtocol extends EventEmitter {
       // Connect directly to destination for transmission (no feedback loop)
       source.connect(this.context!.destination);
 
-      // Play the audio
-      source.start(0);
+      // Wait for transmission to complete
+      return new Promise((resolve, reject) => {
+        // Set a timeout as fallback in case onended doesn't fire
+        const timeoutId = setTimeout(() => {
+          console.log('Audio transmission timeout - assuming completed');
+          this.isTransmitting = false;
+          this.emit('transmitting', false);
+          resolve(true);
+        }, 10000); // 10 second timeout
 
-      // Handle completion
-      source.onended = () => {
-        this.isTransmitting = false;
-        this.emit('transmitting', false);
-      };
+        source.onended = () => {
+          clearTimeout(timeoutId);
+          console.log('Audio transmission completed');
+          this.isTransmitting = false;
+          this.emit('transmitting', false);
+          resolve(true);
+        };
 
-      return true;
+        try {
+          // Play the audio
+          source.start(0);
+        } catch (error) {
+          clearTimeout(timeoutId);
+          console.error('Audio transmission start error:', error);
+          this.isTransmitting = false;
+          this.emit('transmitting', false);
+          reject(error);
+        }
+      });
 
     } catch (error) {
       console.error('Failed to send EIP audio message:', error);
@@ -321,34 +343,58 @@ export class EIPAudioProtocol extends EventEmitter {
       
       console.log(`Sending ${chunks.length} chunks for EIP message ${message.id}`);
       
-      // Send each chunk as a separate message
-      for (let i = 0; i < chunks.length; i++) {
-        const chunkMessage = {
-          version: message.version,
-          type: 'chunk' as const,
-          payload: {
-            originalMessageId: message.id,
-            originalType: message.type,
-            chunkIndex: i,
-            totalChunks: chunks.length,
-            chunkData: chunks[i]
-          },
-          id: crypto.randomUUID()
-        };
-        
-        const chunkText = JSON.stringify(chunkMessage);
-        console.log(`Sending EIP chunk ${i + 1}/${chunks.length}: ${chunkText.length} bytes`);
-        
-        if (!await this.sendSingleEIPMessage(chunkText)) {
-          throw new Error(`Failed to send EIP chunk ${i + 1}`);
-        }
-        
-        // Add delay between chunks to avoid overwhelming the receiver
-        await new Promise(resolve => setTimeout(resolve, 1500));
+      // Stop listening completely during chunk transmission to avoid interference
+      const wasListening = this.isListening;
+      if (wasListening) {
+        console.log('Stopping audio listening during chunk transmission...');
+        this.stopListening();
       }
       
-      console.log('All EIP chunks sent successfully');
-      return true;
+      try {
+        // Send each chunk as a separate message
+        for (let i = 0; i < chunks.length; i++) {
+          const chunkMessage = {
+            version: message.version,
+            type: 'chunk' as const,
+            payload: {
+              originalMessageId: message.id,
+              originalType: message.type,
+              chunkIndex: i,
+              totalChunks: chunks.length,
+              chunkData: chunks[i]
+            },
+            id: translator.new()
+          };
+          
+          const chunkText = JSON.stringify(chunkMessage);
+          console.log(`Sending EIP chunk ${i + 1}/${chunks.length}: ${chunkText.length} bytes`);
+          
+          // Wait for this chunk transmission to complete before starting the next one
+          const success = await this.sendSingleEIPMessage(chunkText);
+          if (!success) {
+            throw new Error(`Failed to send EIP chunk ${i + 1}`);
+          }
+          
+          console.log(`EIP chunk ${i + 1}/${chunks.length} transmission completed`);
+          
+          // Add a buffer delay between chunks after transmission completes
+          if (i < chunks.length - 1) { // Don't delay after the last chunk
+            console.log('Waiting before next chunk...');
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          }
+        }
+        
+        console.log('All EIP chunks sent successfully');
+        return true;
+        
+      } finally {
+        // Resume audio listening after chunk transmission
+        if (wasListening) {
+          console.log('Restarting audio listening after chunk transmission...');
+          await new Promise(resolve => setTimeout(resolve, 2000)); // Wait longer before resuming
+          await this.startListening();
+        }
+      }
       
     } catch (error) {
       console.error('Failed to send chunked EIP message:', error);
