@@ -182,10 +182,16 @@ export class AudioProtocol extends EventEmitter {
         }
       };
 
-      // Connect audio nodes (NO connection to destination to avoid echo)
+      // Connect audio nodes properly to avoid echo but enable processing
       this.mediaStreamSource.connect(this.analyser);
       this.mediaStreamSource.connect(this.processor);
-      // DO NOT connect processor to destination - this causes echo/feedback
+      
+      // Connect processor to a dummy gain node instead of destination to avoid echo
+      // This enables the onaudioprocess event without creating feedback
+      const dummyGain = this.context.createGain();
+      dummyGain.gain.value = 0; // Silent - no audio output
+      this.processor.connect(dummyGain);
+      dummyGain.connect(this.context.destination);
 
       this.isListening = true;
       this.emit('listening', true);
