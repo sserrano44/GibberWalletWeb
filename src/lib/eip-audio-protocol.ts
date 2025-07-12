@@ -180,10 +180,10 @@ export class EIPAudioProtocol extends EventEmitter {
         }
       };
 
-      // Connect audio nodes
+      // Connect audio nodes (NO connection to destination to avoid echo)
       this.mediaStreamSource.connect(this.analyser);
       this.mediaStreamSource.connect(this.processor);
-      this.processor.connect(this.context.destination);
+      // DO NOT connect processor to destination - this causes echo/feedback
 
       this.isListening = true;
       this.emit('listening', true);
@@ -261,13 +261,8 @@ export class EIPAudioProtocol extends EventEmitter {
       const source = this.context.createBufferSource();
       source.buffer = buffer;
 
-      // Connect through analyser if available
-      if (this.analyser) {
-        source.connect(this.analyser);
-        this.analyser.connect(this.context.destination);
-      } else {
-        source.connect(this.context.destination);
-      }
+      // Connect directly to destination for transmission (no feedback loop)
+      source.connect(this.context.destination);
 
       // Play the audio
       source.start(0);
