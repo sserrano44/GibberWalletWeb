@@ -48,6 +48,32 @@ export const DEFAULT_AUDIO_CONFIG: AudioConfig = {
   },
 };
 
+// EIP-compliant configuration for offline client
+export const EIP_AUDIO_CONFIG: AudioConfig = {
+  timeouts: {
+    messageWait: 10000, // 10 seconds as specified in EIP
+    connectResponse: 10000, // 10 seconds as specified in EIP
+    transactionResponse: 30000, // 30 seconds for transaction processing
+    transactionConfirmation: 60000, // 60 seconds
+    cryptoUtilsTransaction: 300000, // 300 seconds
+  },
+  buffers: {
+    scriptProcessorSize: 4096, // Keep larger buffer for reliability
+    fftSize: 4096, // Keep larger FFT for better resolution
+    sampleRate: 44100, // EIP specifies 44100 Hz (not 48000)
+  },
+  ggwave: {
+    soundMarkerThreshold: 4,
+    volumeLevel: 15, // Will be adjusted to 60% in the protocol implementation
+    protocol: 0, // GGWAVE_PROTOCOL_AUDIBLE_NORMAL for EIP compliance
+  },
+  chunking: {
+    maxMessageSize: 4096, // Smaller chunks for EIP compliance
+    chunkSize: 1024, // Smaller chunk size for reliability
+    enabled: true,
+  },
+};
+
 export function estimateTransmissionTime(messageLength: number): number {
   // Rough estimation: ~100 bytes per second for audio transmission
   const baseTime = Math.max(messageLength / 100, 5000); // Minimum 5 seconds

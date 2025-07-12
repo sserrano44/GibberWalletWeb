@@ -1,7 +1,13 @@
 import { EventEmitter } from 'events';
-import { Message, MessageProtocol, MessageType } from './message-protocol';
 import { GGWaveModule, GGWaveInstance } from '@/types/ggwave';
-import { DEFAULT_AUDIO_CONFIG, getDynamicTimeout, AudioConfig, shouldChunkMessage } from '@/config/audio-config';
+import { EIP_AUDIO_CONFIG } from '@/config/audio-config';
+import { 
+  EIPMessage, 
+  validateEIPMessage, 
+  isVersionSupported, 
+  createEIPMessage,
+  EIP_PROTOCOL_VERSION 
+} from '@/config/eip-config';
 
 // Helper function to convert array types
 function convertTypedArray(src: any, type: any) {
@@ -10,15 +16,16 @@ function convertTypedArray(src: any, type: any) {
   return new type(buffer);
 }
 
-export interface AudioProtocolEvents {
-  'message': (message: Message) => void;
+export interface EIPAudioProtocolEvents {
+  'eip-message': (message: EIPMessage) => void;
   'listening': (isListening: boolean) => void;
   'transmitting': (isTransmitting: boolean) => void;
   'audioLevel': (level: number) => void;
   'error': (error: Error) => void;
+  'version-mismatch': (receivedVersion: string, supportedVersion: string) => void;
 }
 
-export class AudioProtocol extends EventEmitter {
+export class EIPAudioProtocol extends EventEmitter {
   private context: AudioContext | null = null;
   private ggwave: GGWaveModule | null = null;
   private instance: GGWaveInstance | null = null;
@@ -28,73 +35,65 @@ export class AudioProtocol extends EventEmitter {
   private isListening = false;
   private isTransmitting = false;
   private analyser: AnalyserNode | null = null;
-  private config: AudioConfig;
-  private chunkStorage: Map<string, Message[]> = new Map();
 
-  constructor(config: AudioConfig = DEFAULT_AUDIO_CONFIG) {
+  constructor() {
     super();
-    this.config = config;
   }
 
   /**
-   * Initialize audio context and ggwave
+   * Initialize audio context and ggwave with EIP-compliant settings
    */
   async initialize(): Promise<boolean> {
     try {
-      console.log('DEBUG: Starting audio initialization...');
+      console.log('DEBUG: Starting EIP audio initialization...');
       
-      // Initialize audio context
+      // Initialize audio context with EIP-compliant sample rate
       if (!this.context) {
-        console.log('DEBUG: Creating AudioContext...');
-        this.context = new AudioContext({ sampleRate: this.config.buffers.sampleRate });
+        console.log('DEBUG: Creating AudioContext with EIP sample rate 44100 Hz...');
+        this.context = new AudioContext({ sampleRate: EIP_AUDIO_CONFIG.buffers.sampleRate });
         console.log('DEBUG: AudioContext created with state:', this.context.state);
       }
 
       // Initialize ggwave if not already done
       if (!this.ggwave) {
         console.log('DEBUG: Checking for ggwave_factory...');
-        console.log('DEBUG: Window object exists:', !!window);
-        console.log('DEBUG: ggwave_factory exists:', !!(window as any).ggwave_factory);
         
         if (window && (window as any).ggwave_factory) {
-          console.log('DEBUG: Initializing ggwave...');
+          console.log('DEBUG: Initializing ggwave for EIP compliance...');
           this.ggwave = await (window as any).ggwave_factory();
-          console.log('DEBUG: ggwave factory result:', this.ggwave);
           
           if (!this.ggwave) {
             throw new Error('Failed to initialize ggwave');
           }
           
-          console.log('DEBUG: Getting default parameters...');
+          console.log('DEBUG: Getting EIP-compliant parameters...');
           const parameters = this.ggwave.getDefaultParameters();
-          console.log('DEBUG: Default parameters:', parameters);
           
+          // Set EIP-compliant parameters
           parameters.sampleRateInp = this.context.sampleRate;
           parameters.sampleRateOut = this.context.sampleRate;
-          parameters.soundMarkerThreshold = this.config.ggwave.soundMarkerThreshold;
+          parameters.soundMarkerThreshold = EIP_AUDIO_CONFIG.ggwave.soundMarkerThreshold;
           
-          console.log('DEBUG: Creating ggwave instance...');
+          console.log('DEBUG: Creating ggwave instance with EIP parameters...');
           this.instance = this.ggwave.init(parameters);
-          console.log('DEBUG: ggwave instance created:', this.instance);
-          console.log('ggwave initialized for web', { instance: this.instance, ggwave: this.ggwave });
+          console.log('DEBUG: EIP ggwave instance created:', this.instance);
         } else {
-          console.error('DEBUG: ggwave_factory not available on window object');
           throw new Error('ggwave_factory not available');
         }
       }
 
       const isInitialized = !!(this.context && this.ggwave && this.instance !== null);
-      console.log('DEBUG: Audio initialization complete:', isInitialized);
+      console.log('DEBUG: EIP audio initialization complete:', isInitialized);
       return isInitialized;
     } catch (error) {
-      console.error('DEBUG: Failed to initialize audio:', error);
+      console.error('DEBUG: Failed to initialize EIP audio:', error);
       this.emit('error', error instanceof Error ? error : new Error(String(error)));
       return false;
     }
   }
 
   /**
-   * Start listening for audio messages
+   * Start listening for EIP audio messages
    */
   async startListening(): Promise<boolean> {
     if (this.isListening || !await this.initialize()) {
@@ -105,11 +104,6 @@ export class AudioProtocol extends EventEmitter {
       // Check if we're in a secure context
       if (!window.isSecureContext) {
         throw new Error('Microphone access requires HTTPS. Please use https://localhost:3000 or deploy to a secure server.');
-      }
-      
-      // Check if mediaDevices is available
-      if (!navigator.mediaDevices) {
-        throw new Error('navigator.mediaDevices is not available. This may be due to an insecure context or browser compatibility.');
       }
       
       // Request microphone access
@@ -132,15 +126,15 @@ export class AudioProtocol extends EventEmitter {
         await this.context.resume();
       }
 
-      // Create audio processing nodes
+      // Create audio processing nodes with EIP-compliant settings
       this.mediaStreamSource = this.context.createMediaStreamSource(stream);
       this.analyser = this.context.createAnalyser();
-      this.analyser.fftSize = this.config.buffers.fftSize;
+      this.analyser.fftSize = EIP_AUDIO_CONFIG.buffers.fftSize;
 
-      const bufferSize = this.config.buffers.scriptProcessorSize;
+      const bufferSize = EIP_AUDIO_CONFIG.buffers.scriptProcessorSize;
       this.processor = this.context.createScriptProcessor(bufferSize, 1, 1);
 
-      // Set up audio processing
+      // Set up EIP-compliant audio processing
       this.processor.onaudioprocess = (e: AudioProcessingEvent) => {
         if (!this.ggwave || this.instance === null) {
           console.error('Audio processing failed: ggwave not initialized');
@@ -156,7 +150,7 @@ export class AudioProtocol extends EventEmitter {
         }
         this.emit('audioLevel', maxLevel);
 
-        // Try to decode audio
+        // Try to decode audio using EIP protocol
         try {
           const result = this.ggwave.decode(
             this.instance,
@@ -165,13 +159,17 @@ export class AudioProtocol extends EventEmitter {
 
           if (result && result.length > 0) {
             const text = new TextDecoder("utf-8").decode(result);
-            console.log('MESSAGE RECEIVED!', text);
+            console.log('EIP MESSAGE RECEIVED!', text);
             
             try {
-              const message = Message.fromJSON(text);
-              this.handleReceivedMessage(message);
+              const messageData = JSON.parse(text);
+              if (validateEIPMessage(messageData)) {
+                this.handleEIPMessage(messageData as EIPMessage);
+              } else {
+                console.error('Invalid EIP message format:', messageData);
+              }
             } catch (parseError) {
-              console.error('Failed to parse message:', parseError);
+              console.error('Failed to parse EIP message:', parseError);
             }
           }
         } catch (decodeError) {
@@ -189,17 +187,18 @@ export class AudioProtocol extends EventEmitter {
 
       this.isListening = true;
       this.emit('listening', true);
+      console.log('EIP Audio Protocol: Started listening for messages');
       return true;
 
     } catch (error) {
-      console.error('Failed to start listening:', error);
+      console.error('Failed to start EIP listening:', error);
       this.emit('error', error instanceof Error ? error : new Error(String(error)));
       return false;
     }
   }
 
   /**
-   * Stop listening for audio messages
+   * Stop listening for EIP audio messages
    */
   stopListening(): void {
     if (!this.isListening) return;
@@ -224,63 +223,50 @@ export class AudioProtocol extends EventEmitter {
     this.analyser = null;
     this.isListening = false;
     this.emit('listening', false);
+    console.log('EIP Audio Protocol: Stopped listening');
   }
 
   /**
-   * Send an audio message
+   * Send an EIP-compliant audio message
    */
-  async sendMessage(message: Message): Promise<boolean> {
+  async sendEIPMessage(message: EIPMessage): Promise<boolean> {
     if (!await this.initialize() || !this.context || !this.ggwave || this.instance === null) {
-      console.error('Failed to send audio message: not initialized');
+      console.error('Failed to send EIP audio message: not initialized');
       return false;
     }
 
-    const messageText = message.toJSON();
-    
-    // Check if message needs chunking
-    if (shouldChunkMessage(messageText.length, this.config)) {
-      return await this.sendChunkedMessage(message);
-    }
-
-    return await this.sendSingleMessage(message);
-  }
-
-  /**
-   * Send a single message without chunking
-   */
-  private async sendSingleMessage(message: Message): Promise<boolean> {
     try {
       this.isTransmitting = true;
       this.emit('transmitting', true);
 
-      const messageText = message.toJSON();
-      console.log('Sending audio message:', messageText);
+      const messageText = JSON.stringify(message);
+      console.log('Sending EIP audio message:', messageText);
 
-      // Encode message to audio using AUDIBLE_FAST protocol
-      const waveform = this.ggwave!.encode(
-        this.instance!,
+      // Encode message to audio using EIP-compliant protocol
+      const waveform = this.ggwave.encode(
+        this.instance,
         messageText,
-        this.config.ggwave.protocol,
-        this.config.ggwave.volumeLevel
+        EIP_AUDIO_CONFIG.ggwave.protocol, // Use EIP-compliant protocol
+        EIP_AUDIO_CONFIG.ggwave.volumeLevel // Use EIP-compliant volume
       );
 
       // Convert to Float32Array for Web Audio API
       const audioBuffer = convertTypedArray(waveform, Float32Array);
       
-      // Create audio buffer
-      const buffer = this.context!.createBuffer(1, audioBuffer.length, this.context!.sampleRate);
+      // Create audio buffer with EIP sample rate
+      const buffer = this.context.createBuffer(1, audioBuffer.length, this.context.sampleRate);
       buffer.getChannelData(0).set(audioBuffer);
       
       // Create and play buffer source
-      const source = this.context!.createBufferSource();
+      const source = this.context.createBufferSource();
       source.buffer = buffer;
 
       // Connect through analyser if available
       if (this.analyser) {
         source.connect(this.analyser);
-        this.analyser.connect(this.context!.destination);
+        this.analyser.connect(this.context.destination);
       } else {
-        source.connect(this.context!.destination);
+        source.connect(this.context.destination);
       }
 
       // Play the audio
@@ -295,7 +281,7 @@ export class AudioProtocol extends EventEmitter {
       return true;
 
     } catch (error) {
-      console.error('Failed to send audio message:', error);
+      console.error('Failed to send EIP audio message:', error);
       this.isTransmitting = false;
       this.emit('transmitting', false);
       this.emit('error', error instanceof Error ? error : new Error(String(error)));
@@ -304,101 +290,52 @@ export class AudioProtocol extends EventEmitter {
   }
 
   /**
-   * Send a message in chunks
+   * Handle received EIP message with version validation
    */
-  private async sendChunkedMessage(message: Message): Promise<boolean> {
-    try {
-      console.log('Message too large, chunking into smaller pieces...');
-      const chunks = MessageProtocol.chunkMessage(message, this.config.chunking.chunkSize);
+  private handleEIPMessage(message: EIPMessage): void {
+    console.log('Processing EIP message:', message.type, 'version:', message.version);
+
+    // Validate version
+    if (!isVersionSupported(message.version)) {
+      console.warn('Unsupported EIP protocol version:', message.version);
+      this.emit('version-mismatch', message.version, EIP_PROTOCOL_VERSION);
       
-      console.log(`Sending ${chunks.length} chunks for message ${message.id}`);
+      // Send error response for version mismatch
+      const errorMessage = createEIPMessage('error', {
+        message: `Unsupported protocol version: ${message.version}`,
+        received_id: message.id
+      });
       
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i];
-        console.log(`Sending chunk ${i + 1}/${chunks.length}`);
-        
-        if (!await this.sendSingleMessage(chunk)) {
-          throw new Error(`Failed to send chunk ${i + 1}`);
-        }
-        
-        // Add delay between chunks to avoid overwhelming the receiver
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-      
-      console.log('All chunks sent successfully');
-      return true;
-      
-    } catch (error) {
-      console.error('Failed to send chunked message:', error);
-      this.emit('error', error instanceof Error ? error : new Error(String(error)));
-      return false;
+      this.sendEIPMessage(errorMessage);
+      return;
     }
+
+    // Emit the validated EIP message
+    this.emit('eip-message', message);
   }
 
   /**
-   * Handle received message (including chunked messages)
+   * Wait for a specific EIP message type with timeout
    */
-  private handleReceivedMessage(message: Message): void {
-    if (message.type === MessageType.CHUNK) {
-      this.handleChunk(message);
-    } else {
-      this.emit('message', message);
-    }
-  }
-
-  /**
-   * Handle a chunk message
-   */
-  private handleChunk(chunk: Message): void {
-    const { originalMessageId, chunkIndex, totalChunks } = chunk.payload;
+  async waitForEIPMessage(expectedType: string, timeout?: number): Promise<EIPMessage | null> {
+    const effectiveTimeout = timeout || EIP_AUDIO_CONFIG.timeouts.messageWait;
     
-    // Get or create chunk storage for this message
-    if (!this.chunkStorage.has(originalMessageId)) {
-      this.chunkStorage.set(originalMessageId, []);
-    }
-    
-    const chunks = this.chunkStorage.get(originalMessageId)!;
-    chunks.push(chunk);
-    
-    console.log(`Received chunk ${chunkIndex + 1}/${totalChunks} for message ${originalMessageId}`);
-    
-    // Check if we have all chunks
-    if (chunks.length === totalChunks) {
-      console.log(`All chunks received for message ${originalMessageId}, reassembling...`);
-      
-      const originalMessage = MessageProtocol.reassembleChunks(chunks);
-      if (originalMessage) {
-        console.log('Successfully reassembled chunked message');
-        this.chunkStorage.delete(originalMessageId);
-        this.emit('message', originalMessage);
-      } else {
-        console.error('Failed to reassemble chunked message');
-        this.chunkStorage.delete(originalMessageId);
-      }
-    }
-  }
-
-  /**
-   * Wait for a specific message type
-   */
-  async waitForMessage(expectedType: string, timeout?: number): Promise<Message | null> {
-    const effectiveTimeout = timeout || this.config.timeouts.messageWait;
     return new Promise((resolve) => {
       let timeoutId: NodeJS.Timeout;
       
-      const messageHandler = (message: Message) => {
+      const messageHandler = (message: EIPMessage) => {
         if (message.type === expectedType) {
           clearTimeout(timeoutId);
-          this.off('message', messageHandler);
+          this.off('eip-message', messageHandler);
           resolve(message);
         }
       };
 
-      this.on('message', messageHandler);
+      this.on('eip-message', messageHandler);
 
       timeoutId = setTimeout(() => {
-        this.off('message', messageHandler);
-        console.log(`Timeout waiting for ${expectedType} after ${effectiveTimeout}ms`);
+        this.off('eip-message', messageHandler);
+        console.log(`EIP timeout waiting for ${expectedType} after ${effectiveTimeout}ms`);
         resolve(null);
       }, effectiveTimeout);
     });
@@ -444,7 +381,6 @@ export class AudioProtocol extends EventEmitter {
 
     this.ggwave = null;
     this.instance = null;
-    this.chunkStorage.clear();
     this.removeAllListeners();
   }
 }
