@@ -52,8 +52,8 @@ export const DEFAULT_AUDIO_CONFIG: AudioConfig = {
 export const EIP_AUDIO_CONFIG: AudioConfig = {
   timeouts: {
     messageWait: 10000, // 10 seconds as specified in EIP
-    connectResponse: 10000, // 10 seconds as specified in EIP
-    transactionResponse: 30000, // 30 seconds for transaction processing
+    connectResponse: 90000, // 90 seconds to account for chunked responses with delays
+    transactionResponse: 120000, // 120 seconds for transaction processing (may be chunked)
     transactionConfirmation: 60000, // 60 seconds
     cryptoUtilsTransaction: 300000, // 300 seconds
   },

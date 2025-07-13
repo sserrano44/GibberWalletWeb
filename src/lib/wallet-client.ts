@@ -109,7 +109,7 @@ export class WalletClient extends EventEmitter {
       }
 
       console.log('Sending connect to offline wallet...');
-      const connect = createEIPMessage('connect', {});
+      const connect = createEIPMessage('connect', {}, null); // No ID for smaller message
       
       if (!await this.audio.sendEIPMessage(connect)) {
         throw new Error('Failed to send connect message');
@@ -249,7 +249,7 @@ export class WalletClient extends EventEmitter {
     try {
       // Step 1: Send connect and wait for connect_response
       console.log('Sending connect to offline wallet...');
-      const connect = createEIPMessage('connect', {});
+      const connect = createEIPMessage('connect', {}, null); // No ID for smaller message
       
       if (!await this.audio.sendEIPMessage(connect)) {
         throw new Error('Failed to send connect');
@@ -358,7 +358,7 @@ export class WalletClient extends EventEmitter {
    * Handle received EIP audio messages
    */
   private handleEIPMessage(message: EIPMessage): void {
-    console.log('Received EIP message:', message.type, message.id);
+    console.log('Received EIP message:', message.type, message.id || 'no-id');
     
     switch (message.type) {
       case 'connect':

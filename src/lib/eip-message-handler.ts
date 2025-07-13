@@ -135,11 +135,15 @@ export class EIPMessageHandler extends EventEmitter {
           
         default:
           console.warn('Unknown EIP message type:', message.type);
-          await this.sendErrorResponse(message.id, `Unknown message type: ${message.type}`);
+          if (message.id) {
+            await this.sendErrorResponse(message.id, `Unknown message type: ${message.type}`);
+          }
       }
     } catch (error) {
       console.error('Error handling EIP message:', error);
-      await this.sendErrorResponse(message.id, error instanceof Error ? error.message : String(error));
+      if (message.id) {
+        await this.sendErrorResponse(message.id, error instanceof Error ? error.message : String(error));
+      }
     }
   }
 
@@ -151,16 +155,16 @@ export class EIPMessageHandler extends EventEmitter {
     
     this.emit('connect-request', message);
     
-    // Create connect response with wallet address
+    // Create connect response with wallet address (minimal payload)
     const responsePayload: ConnectResponsePayload = {
-      address: this.testWallet.getAddress(),
-      received_id: message.id
+      address: this.testWallet.getAddress()
+      // Not including received_id to keep message smaller
     };
     
     // Add a small delay before responding to ensure the online client is ready to receive
     await new Promise(resolve => setTimeout(resolve, 200));
     
-    const response = createEIPMessage('connect_response', responsePayload);
+    const response = createEIPMessage('connect_response', responsePayload, null); // No ID for smaller message
     
     const success = await this.audioProtocol.sendEIPMessage(response);
     if (success) {

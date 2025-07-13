@@ -50,7 +50,7 @@ export interface EIPMessage {
   version: string;
   type: 'connect' | 'connect_response' | 'tx_request' | 'tx_response' | 'ack' | 'error' | 'chunk';
   payload: any;
-  id: string;
+  id?: string;
 }
 
 export interface ConnectPayload {
@@ -59,7 +59,7 @@ export interface ConnectPayload {
 
 export interface ConnectResponsePayload {
   address: string;
-  received_id: string;
+  received_id?: string;
 }
 
 export interface TransactionRequestPayload {
@@ -95,14 +95,20 @@ const translator = shortUuid(); // Creates a translator instance
 export function createEIPMessage(
   type: EIPMessage['type'],
   payload: any,
-  id?: string
+  id?: string | null
 ): EIPMessage {
-  return {
+  const message: any = {
     version: EIP_PROTOCOL_VERSION,
     type,
     payload,
-    id: id || translator.new(), // Use short-uuid instead of crypto.randomUUID()
   };
+  
+  // Only add ID if explicitly provided or if it's not a connect message
+  if (id !== null && (id || type !== 'connect')) {
+    message.id = id || translator.new();
+  }
+  
+  return message;
 }
 
 export function validateEIPMessage(message: any): message is EIPMessage {
@@ -112,7 +118,7 @@ export function validateEIPMessage(message: any): message is EIPMessage {
     typeof message.type === 'string' &&
     ['connect', 'connect_response', 'tx_request', 'tx_response', 'ack', 'error', 'chunk'].includes(message.type) &&
     typeof message.payload === 'object' &&
-    typeof message.id === 'string'
+    (message.id === undefined || typeof message.id === 'string')
   );
 }
 
