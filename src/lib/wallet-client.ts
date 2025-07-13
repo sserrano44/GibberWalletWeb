@@ -361,6 +361,10 @@ export class WalletClient extends EventEmitter {
     console.log('Received EIP message:', message.type, message.id);
     
     switch (message.type) {
+      case 'connect':
+        // Ignore connect messages - we're the online client sending them
+        console.log('Ignoring connect message (we are the sender)');
+        break;
       case 'connect_response':
         console.log('Connect response received from offline wallet');
         if (message.payload && message.payload.address) {
@@ -380,6 +384,10 @@ export class WalletClient extends EventEmitter {
       case 'error':
         console.error('Error from offline wallet:', message.payload.message);
         this.emit('error', new Error(message.payload.message));
+        break;
+      case 'chunk':
+        // Chunks are handled automatically by the EIP audio protocol
+        console.log('Received chunk message (handled by protocol)');
         break;
       default:
         console.log('Unknown EIP message type:', message.type);
