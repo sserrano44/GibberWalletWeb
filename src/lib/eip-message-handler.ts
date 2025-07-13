@@ -157,6 +157,9 @@ export class EIPMessageHandler extends EventEmitter {
       received_id: message.id
     };
     
+    // Add a small delay before responding to ensure the online client is ready to receive
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
     const response = createEIPMessage('connect_response', responsePayload);
     
     const success = await this.audioProtocol.sendEIPMessage(response);

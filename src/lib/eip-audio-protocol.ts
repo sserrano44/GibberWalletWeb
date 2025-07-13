@@ -173,7 +173,19 @@ export class EIPAudioProtocol extends EventEmitter {
                 console.error('Invalid EIP message format:', messageData);
               }
             } catch (parseError) {
-              console.error('Failed to parse EIP message:', parseError);
+              // Check if this might be a truncated chunk message
+              if (text.includes('"type":"chunk"') && text.length >= 140) {
+                console.log('Received truncated chunk message due to ggwave 140-byte limit');
+                console.log(`Truncated text (${text.length} chars):`, text);
+                console.log('Waiting for complete chunk transmission...');
+              } else if (text.includes('"type":"connect_response"') && text.length >= 140) {
+                console.log('Received truncated connect_response message due to ggwave 140-byte limit');
+                console.log(`Truncated text (${text.length} chars):`, text);
+                console.log('This should have been chunked automatically...');
+              } else {
+                console.error('Failed to parse EIP message:', parseError);
+                console.error('Message text:', text);
+              }
             }
           }
         } catch (decodeError) {
