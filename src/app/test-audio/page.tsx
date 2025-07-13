@@ -75,6 +75,7 @@ export default function TestAudioPage() {
       const responseText = JSON.stringify(connectResponse);
       addLog(`Connect response created: ${responseText.length} bytes`);
       addLog(`Response content: ${responseText}`);
+      addLog(`Message ID: ${connectResponse.id} (${connectResponse.id.length} chars)`);
       
       if (responseText.length > 120) {
         addLog('Message will be chunked (>120 bytes)');

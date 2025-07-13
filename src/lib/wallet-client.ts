@@ -1,9 +1,9 @@
 import { EventEmitter } from 'events';
-import { AudioProtocol } from './audio-protocol';
-import { MessageType, MessageProtocol, Message } from './message-protocol';
-import { CryptoUtils, TransactionData } from './crypto-utils';
+import { EIPAudioProtocol } from './eip-audio-protocol';
+import { EIPMessage, createEIPMessage, validateEIPMessage } from '@/config/eip-config';
+import { CryptoUtils } from './crypto-utils';
 import { WalletConfig, TransactionRequest, TransactionResponse, ConnectionStatus, AudioStatus } from '@/types/wallet';
-import { DEFAULT_AUDIO_CONFIG, getDynamicTimeout } from '@/config/audio-config';
+import { EIP_AUDIO_CONFIG } from '@/config/audio-config';
 
 export interface WalletClientEvents {
   'connectionChanged': (status: ConnectionStatus) => void;
@@ -14,7 +14,7 @@ export interface WalletClientEvents {
 }
 
 export class WalletClient extends EventEmitter {
-  private audio: AudioProtocol;
+  private audio: EIPAudioProtocol;
   private crypto: CryptoUtils;
   private config: WalletConfig | null = null;
   private connectionStatus: ConnectionStatus = { connected: false };
@@ -23,11 +23,11 @@ export class WalletClient extends EventEmitter {
 
   constructor() {
     super();
-    this.audio = new AudioProtocol(DEFAULT_AUDIO_CONFIG);
+    this.audio = new EIPAudioProtocol();
     this.crypto = new CryptoUtils();
     
     // Set up audio event listeners
-    this.audio.on('message', this.handleMessage.bind(this));
+    this.audio.on('eip-message', this.handleEIPMessage.bind(this));
     this.audio.on('listening', this.handleListeningChange.bind(this));
     this.audio.on('transmitting', this.handleTransmittingChange.bind(this));
     this.audio.on('audioLevel', this.handleAudioLevel.bind(this));
@@ -109,14 +109,14 @@ export class WalletClient extends EventEmitter {
       }
 
       console.log('Sending connect to offline wallet...');
-      const connect = MessageProtocol.createConnect();
+      const connect = createEIPMessage('connect', {});
       
-      if (!await this.audio.sendMessage(connect)) {
+      if (!await this.audio.sendEIPMessage(connect)) {
         throw new Error('Failed to send connect message');
       }
 
       console.log('Waiting for connect response...');
-      const connectResponse = await this.audio.waitForMessage(MessageType.CONNECT_RESPONSE, DEFAULT_AUDIO_CONFIG.timeouts.connectResponse);
+      const connectResponse = await this.audio.waitForEIPMessage('connect_response', EIP_AUDIO_CONFIG.timeouts.connectResponse);
       
       if (!connectResponse) {
         throw new Error('No connect response received from offline wallet');
@@ -163,16 +163,18 @@ export class WalletClient extends EventEmitter {
 
       console.log(`Nonce: ${nonce}, Gas Price: ${gasPrice}, Gas Limit: ${gasLimit}`);
 
-      // Create transaction request message
-      const txRequest = MessageProtocol.createTxRequest(
-        this.config.chainId,
-        request.to,
-        request.value,
-        request.data || '0x',
-        nonce,
-        gasPrice,
-        gasLimit
-      );
+      // Create EIP transaction request message
+      const txRequest = createEIPMessage('tx_request', {
+        transaction: {
+          chainId: this.config.chainId,
+          nonce: `0x${nonce.toString(16)}`,
+          gasPrice: `0x${gasPrice.toString(16)}`,
+          gasLimit: `0x${gasLimit.toString(16)}`,
+          to: request.to,
+          value: `0x${BigInt(request.value).toString(16)}`,
+          data: request.data || '0x'
+        }
+      });
 
       // Send transaction via audio protocol
       return await this.sendTransactionRequest(txRequest);
@@ -214,16 +216,18 @@ export class WalletClient extends EventEmitter {
         this.config.chainId
       );
 
-      // Create transaction request message
-      const txRequest = MessageProtocol.createTxRequest(
-        this.config.chainId,
-        transaction.to,
-        transaction.value,
-        transaction.data || '0x',
-        transaction.nonce,
-        transaction.gasPrice,
-        transaction.gasLimit
-      );
+      // Create EIP transaction request message
+      const txRequest = createEIPMessage('tx_request', {
+        transaction: {
+          chainId: this.config.chainId,
+          nonce: `0x${transaction.nonce.toString(16)}`,
+          gasPrice: `0x${transaction.gasPrice.toString(16)}`,
+          gasLimit: `0x${transaction.gasLimit.toString(16)}`,
+          to: transaction.to,
+          value: `0x${transaction.value.toString(16)}`,
+          data: transaction.data || '0x'
+        }
+      });
 
       // Send transaction via audio protocol
       return await this.sendTransactionRequest(txRequest);
@@ -241,18 +245,18 @@ export class WalletClient extends EventEmitter {
   /**
    * Send transaction request via audio protocol
    */
-  private async sendTransactionRequest(txRequest: Message): Promise<TransactionResponse> {
+  private async sendTransactionRequest(txRequest: EIPMessage): Promise<TransactionResponse> {
     try {
       // Step 1: Send connect and wait for connect_response
       console.log('Sending connect to offline wallet...');
-      const connect = MessageProtocol.createConnect();
+      const connect = createEIPMessage('connect', {});
       
-      if (!await this.audio.sendMessage(connect)) {
+      if (!await this.audio.sendEIPMessage(connect)) {
         throw new Error('Failed to send connect');
       }
 
       console.log('Waiting for connect response...');
-      const connectResponse = await this.audio.waitForMessage(MessageType.CONNECT_RESPONSE, DEFAULT_AUDIO_CONFIG.timeouts.connectResponse);
+      const connectResponse = await this.audio.waitForEIPMessage('connect_response', EIP_AUDIO_CONFIG.timeouts.connectResponse);
       
       if (!connectResponse) {
         throw new Error('No connect response received from offline wallet');
@@ -267,16 +271,16 @@ export class WalletClient extends EventEmitter {
       console.log('Connect response received, sending transaction request...');
 
       // Step 2: Send transaction request
-      if (!await this.audio.sendMessage(txRequest)) {
+      if (!await this.audio.sendEIPMessage(txRequest)) {
         throw new Error('Failed to send transaction request');
       }
 
       console.log('Waiting for signed transaction...');
 
       // Step 3: Wait for signed transaction response
-      const txRequestJson = txRequest.toJSON();
-      const dynamicTimeout = getDynamicTimeout(txRequestJson.length, DEFAULT_AUDIO_CONFIG.timeouts.transactionResponse);
-      const response = await this.audio.waitForMessage(MessageType.TX_RESPONSE, dynamicTimeout);
+      const txRequestJson = JSON.stringify(txRequest);
+      const dynamicTimeout = Math.max(EIP_AUDIO_CONFIG.timeouts.transactionResponse, txRequestJson.length * 100); // Rough estimate
+      const response = await this.audio.waitForEIPMessage('tx_response', dynamicTimeout);
       
       if (!response) {
         throw new Error('No transaction response received');
@@ -297,7 +301,7 @@ export class WalletClient extends EventEmitter {
 
       // Step 5: Wait for confirmation (optional)
       try {
-        const receipt = await this.crypto.waitForTransaction(txHash, DEFAULT_AUDIO_CONFIG.timeouts.transactionConfirmation);
+        const receipt = await this.crypto.waitForTransaction(txHash, EIP_AUDIO_CONFIG.timeouts.transactionConfirmation);
         if (receipt) {
           console.log('Transaction confirmed:', receipt);
           this.emit('transactionConfirmed', receipt);
@@ -351,13 +355,13 @@ export class WalletClient extends EventEmitter {
   }
 
   /**
-   * Handle received audio messages
+   * Handle received EIP audio messages
    */
-  private handleMessage(message: Message): void {
-    console.log('Received message:', message.type, message.id);
+  private handleEIPMessage(message: EIPMessage): void {
+    console.log('Received EIP message:', message.type, message.id);
     
     switch (message.type) {
-      case MessageType.CONNECT_RESPONSE:
+      case 'connect_response':
         console.log('Connect response received from offline wallet');
         if (message.payload && message.payload.address) {
           this.walletAddress = message.payload.address;
@@ -370,15 +374,15 @@ export class WalletClient extends EventEmitter {
           this.emit('connectionChanged', this.connectionStatus);
         }
         break;
-      case MessageType.TX_RESPONSE:
+      case 'tx_response':
         console.log('Transaction response received');
         break;
-      case MessageType.ERROR:
+      case 'error':
         console.error('Error from offline wallet:', message.payload.message);
         this.emit('error', new Error(message.payload.message));
         break;
       default:
-        console.log('Unknown message type:', message.type);
+        console.log('Unknown EIP message type:', message.type);
     }
   }
 
